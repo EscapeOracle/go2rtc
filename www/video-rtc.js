@@ -51,6 +51,12 @@ export class VideoRTC extends HTMLElement {
         this.background = false;
 
         /**
+         * [config] Display video player controls. Default `false`.
+         * @type {boolean}
+         */
+        this.controls = false;
+
+        /**
          * [config] Run stream only when player in the viewport. Stop when user scroll out player.
          * Value is percentage of visibility from `0` (not visible) to `1` (full visible).
          * Default `0` - disable;
@@ -237,7 +243,8 @@ export class VideoRTC extends HTMLElement {
      */
     oninit() {
         this.video = document.createElement('video');
-        this.video.controls = true;
+        this.video.controls = this.controls;
+        this.video.muted = true;
         this.video.playsInline = true;
         this.video.preload = 'auto';
 
@@ -660,3 +667,5 @@ export class VideoRTC extends HTMLElement {
         return window.btoa(binary);
     }
 }
+
+customElements.define('video-stream', VideoRTC);

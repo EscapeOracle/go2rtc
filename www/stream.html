@@ -28,10 +28,11 @@
 </head>
 
 <body>
-    <script type="module" src="./video-stream.js"></script>
+    <script type="module" src="./video-rtc.js"></script>
     <script type="module">
         const params = new URLSearchParams(location.search);
         const stream = params.get('src');
+        const controls = params.get('controls') === 'true';
         const width = '1 0 0';
 
         /** @type {VideoStream} */
@@ -39,7 +40,8 @@
         video.background = false;
         video.mode = "webrtc";
         video.style.flex = width;
-        video.src = new URL('api/ws?src=' + encodeURIComponent(streams[i]), location.href);
+        video.controls = controls;
+        video.src = new URL('api/ws?src=' + encodeURIComponent(stream), location.href);
         document.body.appendChild(video);
     </script>
 </body>
