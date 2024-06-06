@@ -5,25 +5,35 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/AlexxIT/go2rtc/internal/api"
 	"github.com/AlexxIT/go2rtc/internal/api/ws"
+	"github.com/AlexxIT/go2rtc/internal/app"
 	"github.com/AlexxIT/go2rtc/internal/ffmpeg"
 	"github.com/AlexxIT/go2rtc/internal/streams"
+	"github.com/AlexxIT/go2rtc/pkg/ascii"
 	"github.com/AlexxIT/go2rtc/pkg/core"
 	"github.com/AlexxIT/go2rtc/pkg/magic"
 	"github.com/AlexxIT/go2rtc/pkg/mjpeg"
 	"github.com/AlexxIT/go2rtc/pkg/tcp"
-	"github.com/rs/zerolog/log"
+	"github.com/AlexxIT/go2rtc/pkg/y4m"
+	"github.com/rs/zerolog"
 )
 
 func Init() {
 	api.HandleFunc("api/frame.jpeg", handlerKeyframe)
 	api.HandleFunc("api/stream.mjpeg", handlerStream)
+	api.HandleFunc("api/stream.ascii", handlerStream)
+	api.HandleFunc("api/stream.y4m", apiStreamY4M)
 
 	ws.HandleFunc("mjpeg", handlerWS)
+
+	log = app.GetLogger("mjpeg")
 }
+
+var log zerolog.Logger
 
 func handlerKeyframe(w http.ResponseWriter, r *http.Request) {
 	src := r.URL.Query().Get("src")
@@ -99,38 +109,22 @@ func outputMjpeg(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h := w.Header()
-	h.Set("Content-Type", "multipart/x-mixed-replace; boundary=frame")
 	h.Set("Cache-Control", "no-cache")
 	h.Set("Connection", "close")
 	h.Set("Pragma", "no-cache")
 
-	wr := &writer{wr: w, buf: []byte(header)}
-	_, _ = cons.WriteTo(wr)
+	if strings.HasSuffix(r.URL.Path, "mjpeg") {
+		wr := mjpeg.NewWriter(w)
+		_, _ = cons.WriteTo(wr)
+	} else {
+		cons.Type = "ASCII passive consumer "
 
-	stream.RemoveConsumer(cons)
-}
-
-const header = "--frame\r\nContent-Type: image/jpeg\r\nContent-Length: "
-
-type writer struct {
-	wr  io.Writer
-	buf []byte
-}
-
-func (w *writer) Write(p []byte) (n int, err error) {
-	w.buf = w.buf[:len(header)]
-	w.buf = append(w.buf, strconv.Itoa(len(p))...)
-	w.buf = append(w.buf, "\r\n\r\n"...)
-	w.buf = append(w.buf, p...)
-	w.buf = append(w.buf, "\r\n"...)
-
-	// Chrome bug: mjpeg image always shows the second to last image
-	// https://bugs.chromium.org/p/chromium/issues/detail?id=527446
-	if n, err = w.wr.Write(w.buf); err == nil {
-		w.wr.(http.Flusher).Flush()
+		query := r.URL.Query()
+		wr := ascii.NewWriter(w, query.Get("color"), query.Get("back"), query.Get("text"))
+		_, _ = cons.WriteTo(wr)
 	}
 
-	return
+	stream.RemoveConsumer(cons)
 }
 
 func inputMjpeg(w http.ResponseWriter, r *http.Request) {
@@ -178,4 +172,26 @@ func handlerWS(tr *ws.Transport, _ *ws.Message) error {
 	})
 
 	return nil
+}
+
+func apiStreamY4M(w http.ResponseWriter, r *http.Request) {
+	src := r.URL.Query().Get("src")
+	stream := streams.Get(src)
+	if stream == nil {
+		http.Error(w, api.StreamNotFound, http.StatusNotFound)
+		return
+	}
+
+	cons := y4m.NewConsumer()
+	cons.RemoteAddr = tcp.RemoteAddr(r)
+	cons.UserAgent = r.UserAgent()
+
+	if err := stream.AddConsumer(cons); err != nil {
+		log.Error().Err(err).Caller().Send()
+		return
+	}
+
+	_, _ = cons.WriteTo(w)
+
+	stream.RemoveConsumer(cons)
 }

@@ -24,6 +24,7 @@ type Conn struct {
 
 	Backchannel bool
 	Media       string
+	OnClose     func() error
 	PacketSize  uint16
 	SessionName string
 	Timeout     int
@@ -124,7 +125,11 @@ func (c *Conn) Handle() (err error) {
 
 	case core.ModePassiveProducer:
 		// polling frames from remote RTSP Client (ex FFmpeg)
-		timeout = time.Second * 15
+		if c.Timeout == 0 {
+			timeout = time.Second * 15
+		} else {
+			timeout = time.Second * time.Duration(c.Timeout)
+		}
 
 	case core.ModePassiveConsumer:
 		// pushing frames to remote RTSP Client (ex VLC)

@@ -21,7 +21,7 @@ import (
 func Init() {
 	var conf struct {
 		API struct {
-			Listen string `json:"listen"`
+			Listen string `yaml:"listen"`
 		} `yaml:"api"`
 		Mod struct {
 			Config string `yaml:"config"`
@@ -57,7 +57,7 @@ func Init() {
 
 	// load static entries from Hass config
 	if err := importConfig(conf.Mod.Config); err != nil {
-		log.Debug().Msgf("[hass] can't import config: %s", err)
+		log.Trace().Msgf("[hass] can't import config: %s", err)
 
 		api.HandleFunc("api/hass", func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "no hass config", http.StatusNotFound)

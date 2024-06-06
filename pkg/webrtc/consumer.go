@@ -20,7 +20,7 @@ func (c *Conn) AddTrack(media *core.Media, codec *core.Codec, track *core.Receiv
 
 	for _, sender := range c.senders {
 		if sender.Codec == codec {
-			sender.HandleRTP(track)
+			sender.Bind(track)
 			return nil
 		}
 	}
@@ -77,7 +77,13 @@ func (c *Conn) AddTrack(media *core.Media, codec *core.Codec, track *core.Receiv
 		sender.Handler = pcm.RepackG711(false, sender.Handler)
 	}
 
-	sender.HandleRTP(track)
+	// TODO: rewrite this dirty logic
+	// maybe not best solution, but ActiveProducer connected before AddTrack
+	if c.Mode != core.ModeActiveProducer {
+		sender.Bind(track)
+	} else {
+		sender.HandleRTP(track)
+	}
 
 	c.senders = append(c.senders, sender)
 	return nil

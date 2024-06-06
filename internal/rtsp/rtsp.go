@@ -21,7 +21,7 @@ func Init() {
 			Username     string `yaml:"username" json:"-"`
 			Password     string `yaml:"password" json:"-"`
 			DefaultQuery string `yaml:"default_query" json:"default_query"`
-			PacketSize   uint16 `yaml:"pkt_size"`
+			PacketSize   uint16 `yaml:"pkt_size" json:"pkt_size,omitempty"`
 		} `yaml:"rtsp"`
 	}
 
@@ -208,6 +208,11 @@ func tcpHandler(conn *rtsp.Conn) {
 			stream := streams.Get(name)
 			if stream == nil {
 				return
+			}
+
+			query := conn.URL.Query()
+			if s := query.Get("timeout"); s != "" {
+				conn.Timeout = core.Atoi(s)
 			}
 
 			log.Debug().Str("stream", name).Msg("[rtsp] new producer")

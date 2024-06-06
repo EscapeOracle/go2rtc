@@ -1,6 +1,7 @@
 package streams
 
 import (
+	"errors"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -9,6 +10,8 @@ import (
 
 	"github.com/AlexxIT/go2rtc/internal/api"
 	"github.com/AlexxIT/go2rtc/internal/app"
+	"github.com/AlexxIT/go2rtc/pkg/probe"
+	"github.com/AlexxIT/go2rtc/pkg/tcp"
 	"github.com/rs/zerolog"
 )
 
@@ -47,9 +50,16 @@ func Get(name string) *Stream {
 
 var sanitize = regexp.MustCompile(`\s`)
 
-func New(name string, source string) *Stream {
-	// not allow creating dynamic streams with spaces in the source
+// Validate - not allow creating dynamic streams with spaces in the source
+func Validate(source string) error {
 	if sanitize.MatchString(source) {
+		return errors.New("streams: invalid dynamic source")
+	}
+	return nil
+}
+
+func New(name string, source string) *Stream {
+	if Validate(source) != nil {
 		return nil
 	}
 
@@ -148,7 +158,27 @@ func streamsHandler(w http.ResponseWriter, r *http.Request) {
 	// Not sure about all this API. Should be rewrited...
 	switch r.Method {
 	case "GET":
-		api.ResponsePrettyJSON(w, streams[src])
+		stream := Get(src)
+		if stream == nil {
+			http.Error(w, "", http.StatusNotFound)
+			return
+		}
+
+		cons := probe.NewProbe(query)
+		if len(cons.Medias) != 0 {
+			cons.RemoteAddr = tcp.RemoteAddr(r)
+			cons.UserAgent = r.UserAgent()
+			if err := stream.AddConsumer(cons); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
+
+			api.ResponsePrettyJSON(w, stream)
+
+			stream.RemoveConsumer(cons)
+		} else {
+			api.ResponsePrettyJSON(w, streams[src])
+		}
 
 	case "PUT":
 		name := query.Get("name")
@@ -181,13 +211,17 @@ func streamsHandler(w http.ResponseWriter, r *http.Request) {
 		// with dst - redirect source to dst
 		if dst := query.Get("dst"); dst != "" {
 			if stream := Get(dst); stream != nil {
-				if err := stream.Play(src); err != nil {
+				if err := Validate(src); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+				} else if err = stream.Play(src); err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 				} else {
 					api.ResponseJSON(w, stream)
 				}
 			} else if stream = Get(src); stream != nil {
-				if err := stream.Publish(dst); err != nil {
+				if err := Validate(dst); err != nil {
+					http.Error(w, err.Error(), http.StatusBadRequest)
+				} else if err = stream.Publish(dst); err != nil {
 					http.Error(w, err.Error(), http.StatusInternalServerError)
 				}
 			} else {
