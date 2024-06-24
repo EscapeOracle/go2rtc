@@ -1,13 +1,16 @@
 package exec
 
 import (
+	"bufio"
 	"crypto/md5"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"net/url"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -48,8 +51,10 @@ func Init() {
 }
 
 func execHandle(rawURL string) (core.Producer, error) {
+	rawURL, rawQuery, _ := strings.Cut(rawURL, "#")
+	query := streams.ParseQuery(rawQuery)
+
 	var path string
-	var query url.Values
 
 	// RTSP flow should have `{output}` inside URL
 	// pipe flow may have `#{params}` inside URL
@@ -61,9 +66,6 @@ func execHandle(rawURL string) (core.Producer, error) {
 		sum := md5.Sum([]byte(rawURL))
 		path = "/" + hex.EncodeToString(sum[:])
 		rawURL = rawURL[:i] + "rtsp://127.0.0.1:" + rtsp.Port + path + rawURL[i+8:]
-	} else if i = strings.IndexByte(rawURL, '#'); i > 0 {
-		query = streams.ParseQuery(rawURL[i+1:])
-		rawURL = rawURL[:i]
 	}
 
 	args := shell.QuoteSplit(rawURL[5:]) // remove `exec:`
@@ -73,21 +75,32 @@ func execHandle(rawURL string) (core.Producer, error) {
 		debug: log.Debug().Enabled(),
 	}
 
-	if path == "" {
-		return handlePipe(rawURL, cmd, query)
-	}
-
-	return handleRTSP(rawURL, cmd, path)
-}
-
-func handlePipe(_ string, cmd *exec.Cmd, query url.Values) (core.Producer, error) {
 	if query.Get("backchannel") == "1" {
 		return stdin.NewClient(cmd)
 	}
 
-	r, err := PipeCloser(cmd, query)
+	cl := &closer{cmd: cmd, query: query}
+
+	if path == "" {
+		return handlePipe(rawURL, cmd, cl)
+	}
+
+	return handleRTSP(rawURL, cmd, cl, path)
+}
+
+func handlePipe(source string, cmd *exec.Cmd, cl io.Closer) (core.Producer, error) {
+	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
+	}
+
+	rc := struct {
+		io.Reader
+		io.Closer
+	}{
+		// add buffer for pipe reader to reduce syscall
+		bufio.NewReaderSize(stdout, core.BufferSize),
+		cl,
 	}
 
 	log.Debug().Strs("args", cmd.Args).Msg("[exec] run pipe")
@@ -98,17 +111,23 @@ func handlePipe(_ string, cmd *exec.Cmd, query url.Values) (core.Producer, error
 		return nil, err
 	}
 
-	prod, err := magic.Open(r)
+	prod, err := magic.Open(rc)
 	if err != nil {
-		_ = r.Close()
+		_ = rc.Close()
+		return nil, fmt.Errorf("exec/pipe: %w\n%s", err, cmd.Stderr)
+	}
+
+	if info, ok := prod.(core.Info); ok {
+		info.SetProtocol("pipe")
+		setRemoteInfo(info, source, cmd.Args)
 	}
 
 	log.Debug().Stringer("launch", time.Since(ts)).Msg("[exec] run pipe")
 
-	return prod, fmt.Errorf("exec/pipe: %w\n%s", err, cmd.Stderr)
+	return prod, nil
 }
 
-func handleRTSP(url string, cmd *exec.Cmd, path string) (core.Producer, error) {
+func handleRTSP(source string, cmd *exec.Cmd, cl io.Closer, path string) (core.Producer, error) {
 	if log.Trace().Enabled() {
 		cmd.Stdout = os.Stdout
 	}
@@ -130,7 +149,7 @@ func handleRTSP(url string, cmd *exec.Cmd, path string) (core.Producer, error) {
 	ts := time.Now()
 
 	if err := cmd.Start(); err != nil {
-		log.Error().Err(err).Str("url", url).Msg("[exec]")
+		log.Error().Err(err).Str("source", source).Msg("[exec]")
 		return nil, err
 	}
 
@@ -140,19 +159,17 @@ func handleRTSP(url string, cmd *exec.Cmd, path string) (core.Producer, error) {
 	}()
 
 	select {
-	case <-time.After(time.Second * 60):
-		_ = cmd.Process.Kill()
-		log.Error().Str("url", url).Msg("[exec] timeout")
+	case <-time.After(time.Minute):
+		log.Error().Str("source", source).Msg("[exec] timeout")
+		_ = cl.Close()
 		return nil, errors.New("exec: timeout")
 	case <-done:
 		// limit message size
 		return nil, fmt.Errorf("exec/rtsp\n%s", cmd.Stderr)
 	case prod := <-waiter:
 		log.Debug().Stringer("launch", time.Since(ts)).Msg("[exec] run rtsp")
-		prod.OnClose = func() error {
-			log.Debug().Msgf("[exec] kill rtsp")
-			return errors.Join(cmd.Process.Kill(), cmd.Wait())
-		}
+		setRemoteInfo(prod, source, cmd.Args)
+		prod.OnClose = cl.Close
 		return prod, nil
 	}
 }
@@ -208,4 +225,16 @@ func trimSpace(b []byte) []byte {
 		}
 	}
 	return b[start:stop]
+}
+
+func setRemoteInfo(info core.Info, source string, args []string) {
+	info.SetSource(source)
+
+	if i := slices.Index(args, "-i"); i > 0 && i < len(args)-1 {
+		rawURL := args[i+1]
+		if u, err := url.Parse(rawURL); err == nil && u.Host != "" {
+			info.SetRemoteAddr(u.Host)
+			info.SetURL(rawURL)
+		}
+	}
 }

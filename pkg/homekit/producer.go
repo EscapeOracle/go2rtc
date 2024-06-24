@@ -15,8 +15,9 @@ import (
 	"github.com/pion/rtp"
 )
 
+// Deprecated: rename to Producer
 type Client struct {
-	core.SuperProducer
+	core.Connection
 
 	hap  *hap.Client
 	srtp *srtp.Server
@@ -52,9 +53,13 @@ func Dial(rawURL string, server *srtp.Server) (*Client, error) {
 	}
 
 	client := &Client{
-		SuperProducer: core.SuperProducer{
-			Type: "HomeKit active producer",
-			URL:  conn.URL(),
+		Connection: core.Connection{
+			ID:         core.NewID(),
+			FormatName: "homekit",
+			Protocol:   "udp",
+			RemoteAddr: conn.Conn.RemoteAddr().String(),
+			Source:     rawURL,
+			Transport:  conn,
 		},
 		hap:  conn,
 		srtp: server,
@@ -93,7 +98,6 @@ func (c *Client) GetMedias() []*core.Media {
 		return nil
 	}
 
-	c.URL = c.hap.URL()
 	c.SDP = fmt.Sprintf("%+v\n%+v", c.videoConfig, c.audioConfig)
 
 	c.Medias = []*core.Media{
@@ -175,8 +179,6 @@ func (c *Client) Start() error {
 }
 
 func (c *Client) Stop() error {
-	_ = c.SuperProducer.Close()
-
 	if c.videoSession != nil && c.videoSession.Remote != nil {
 		c.srtp.DelSession(c.videoSession)
 	}
@@ -184,7 +186,7 @@ func (c *Client) Stop() error {
 		c.srtp.DelSession(c.audioSession)
 	}
 
-	return c.hap.Close()
+	return c.Connection.Stop()
 }
 
 func (c *Client) trackByKind(kind string) *core.Receiver {
