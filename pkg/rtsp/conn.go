@@ -15,6 +15,7 @@ import (
 	"github.com/AlexxIT/go2rtc/pkg/tcp"
 	"github.com/pion/rtcp"
 	"github.com/pion/rtp"
+	"github.com/rs/zerolog/log"
 )
 
 type Conn struct {
@@ -133,6 +134,7 @@ func (c *Conn) Handle() (err error) {
 		ts := time.Now()
 
 		if err = c.conn.SetReadDeadline(ts.Add(timeout)); err != nil {
+			log.Error().Err(err).Str("timeout", timeout.String()).Msg("[rtsp] set read deadline")
 			return
 		}
 
@@ -143,6 +145,7 @@ func (c *Conn) Handle() (err error) {
 		var buf4 []byte // `$` + 1B channel number + 2B size
 		buf4, err = c.reader.Peek(4)
 		if err != nil {
+			log.Error().Err(err).Msg("[rtsp] read request")
 			return
 		}
 
@@ -154,6 +157,7 @@ func (c *Conn) Handle() (err error) {
 			case "RTSP":
 				var res *tcp.Response
 				if res, err = c.ReadResponse(); err != nil {
+					log.Error().Err(err).Msg("[rtsp] rtsp read response")
 					return
 				}
 				c.Fire(res)
@@ -164,12 +168,14 @@ func (c *Conn) Handle() (err error) {
 			case "OPTI", "TEAR", "DESC", "SETU", "PLAY", "PAUS", "RECO", "ANNO", "GET_", "SET_":
 				var req *tcp.Request
 				if req, err = c.ReadRequest(); err != nil {
+					log.Error().Err(err).Msg("[rtsp] non-rtsp read request")
 					return
 				}
 				c.Fire(req)
 				if req.Method == MethodOptions {
 					res := &tcp.Response{Request: req}
 					if err = c.WriteResponse(res); err != nil {
+						log.Error().Err(err).Str("method", req.Method).Msg("[rtsp] non-rtsp write response")
 						return
 					}
 				}
@@ -219,6 +225,7 @@ func (c *Conn) Handle() (err error) {
 
 			// skip 4 bytes from c.reader.Peek
 			if _, err = c.reader.Discard(4); err != nil {
+				log.Error().Err(err).Msg("[rtsp] discarding 4 bytes")
 				return
 			}
 		}
@@ -226,6 +233,7 @@ func (c *Conn) Handle() (err error) {
 		// init memory for data
 		buf := make([]byte, size)
 		if _, err = io.ReadFull(c.reader, buf); err != nil {
+			log.Error().Err(err).Msg("[rtsp] read full data")
 			return
 		}
 
@@ -234,6 +242,7 @@ func (c *Conn) Handle() (err error) {
 		if channelID&1 == 0 {
 			packet := &rtp.Packet{}
 			if err = packet.Unmarshal(buf); err != nil {
+				log.Error().Err(err).Msg("[rtsp] unmarshal rtp packet")
 				return
 			}
 
@@ -261,6 +270,7 @@ func (c *Conn) Handle() (err error) {
 		if keepaliveDT != 0 && ts.After(keepaliveTS) {
 			req := &tcp.Request{Method: MethodOptions, URL: c.URL}
 			if err = c.WriteRequest(req); err != nil {
+				log.Error().Err(err).Msg("[rtsp] keepalive write request")
 				return
 			}
 
@@ -356,6 +366,7 @@ func (c *Conn) WriteResponse(res *tcp.Response) error {
 
 func (c *Conn) ReadResponse() (*tcp.Response, error) {
 	if err := c.conn.SetReadDeadline(time.Now().Add(Timeout)); err != nil {
+		log.Error().Err(err).Caller().Send()
 		return nil, err
 	}
 	return tcp.ReadResponse(c.reader)

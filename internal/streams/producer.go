@@ -164,6 +164,7 @@ func (p *Producer) worker(conn core.Producer, workerID int) {
 		p.mu.Unlock()
 
 		if closed {
+			log.Trace().Msgf("[streams] stop worker=%d", workerID)
 			return
 		}
 

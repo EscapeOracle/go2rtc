@@ -63,6 +63,7 @@ func Init() {
 		for {
 			conn, err := ln.Accept()
 			if err != nil {
+				log.Error().Err(err).Msg("[rtsp] accept")
 				return
 			}
 
@@ -73,6 +74,7 @@ func Init() {
 				c.Auth(conf.Mod.Username, conf.Mod.Password)
 			}
 			go tcpHandler(c)
+			log.Debug().Msg("[rtsp] restarting connection")
 		}
 	}()
 }
@@ -244,6 +246,8 @@ func tcpHandler(conn *rtsp.Conn) {
 
 	if closer != nil {
 		if err := conn.Handle(); err != nil {
+			// Find where it came from
+			log.Error().Err(err).Caller().Send()
 			log.Debug().Err(err).Msg("[rtsp] handle")
 		}
 
