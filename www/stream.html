@@ -41,7 +41,7 @@
         /** @type {VideoStream} */
         const video = document.createElement('video-stream');
         video.background = false;
-        video.mode = "webrtc";
+        video.mode = "webrtc,mse";
         video.style.flex = width;
         video.controls = controls;
         video.src = new URL('api/ws?src=' + encodeURIComponent(stream), location.href);
